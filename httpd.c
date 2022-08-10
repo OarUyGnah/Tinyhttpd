@@ -26,7 +26,13 @@
 #include <sys/wait.h>
 #include <stdlib.h>
 #include <stdint.h>
-
+/*
+    #include  <ctype.h>
+    int isspace(int c);
+    检查参数c是否为空格字符，也就是判断是否为空格(' ')、水平定位字符
+    ('\t')、归位键('\r')、换行('\n')、垂直定位字符('\v')或翻页('\f')的情况。
+    返回值：空格等字符返回非0
+*/
 #define ISspace(x) isspace((int)(x))
 
 #define SERVER_STRING "Server: jdbhttpd/0.1.0\r\n"
@@ -65,9 +71,20 @@ void accept_request(void *arg)
     int cgi = 0;      /* becomes true if server decides this is a CGI
                        * program */
     char *query_string = NULL;
-
+    //numchars为所读字节数，存储在buf
     numchars = get_line(client, buf, sizeof(buf));
+    /*
+        GET /path HTTP/1.1
+        Header1: Value1
+        Header2: Value2
+        Header3: Value3
+    */
+    
+    //开始遍历buf
     i = 0; j = 0;
+    
+    //将方法GET、POST等名称放入method数组中
+    //当碰到第一个空字符终止while
     while (!ISspace(buf[i]) && (i < sizeof(method) - 1))
     {
         method[i] = buf[i];
@@ -75,42 +92,49 @@ void accept_request(void *arg)
     }
     j=i;
     method[i] = '\0';
-
+    //如果不是GET或POST则调用unimplemented(int);
     if (strcasecmp(method, "GET") && strcasecmp(method, "POST"))
     {
         unimplemented(client);
         return;
     }
-
+    
     if (strcasecmp(method, "POST") == 0)
         cgi = 1;
 
     i = 0;
+    //跳过空字符
     while (ISspace(buf[j]) && (j < numchars))
         j++;
+    //获取url
     while (!ISspace(buf[j]) && (i < sizeof(url) - 1) && (j < numchars))
     {
         url[i] = buf[j];
         i++; j++;
     }
     url[i] = '\0';
-
+    
     if (strcasecmp(method, "GET") == 0)
     {
         query_string = url;
+        //指向？
         while ((*query_string != '?') && (*query_string != '\0'))
             query_string++;
+        //此时*query_string == '?'则 cgi=1
         if (*query_string == '?')
         {
             cgi = 1;
+            //截断url，断在?处           http://localhost:8080/?name="oar"&age=22 -> *url = "http://localhost:8080/\0";
             *query_string = '\0';
-            query_string++;
+            query_string++; // *query_string = "name="oar"&age=22\0";
         }
     }
-
+    //将url放入path中
     sprintf(path, "htdocs%s", url);
+    //如果url末尾为/则默认为index.html   http://localhost:8080/ -> http://localhost:8080/index.html
     if (path[strlen(path) - 1] == '/')
         strcat(path, "index.html");
+    //将path的文件状态复制到struct stat st中
     if (stat(path, &st) == -1) {
         while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
             numchars = get_line(client, buf, sizeof(buf));
@@ -118,8 +142,10 @@ void accept_request(void *arg)
     }
     else
     {
+        //如果当前路径为文件夹，则默认为当前路径的index.html
         if ((st.st_mode & S_IFMT) == S_IFDIR)
             strcat(path, "/index.html");
+        //如果文件所有者、用户组或其他用户具有可执行权限，则cgi=1
         if ((st.st_mode & S_IXUSR) ||
                 (st.st_mode & S_IXGRP) ||
                 (st.st_mode & S_IXOTH)    )
@@ -129,7 +155,7 @@ void accept_request(void *arg)
         else
             execute_cgi(client, path, method, query_string);
     }
-
+    
     close(client);
 }
 
@@ -163,10 +189,12 @@ void bad_request(int client)
 void cat(int client, FILE *resource)
 {
     char buf[1024];
-
+    //FILE *resource = fopen(path,"r");
     fgets(buf, sizeof(buf), resource);
+    //没到eof继续读
     while (!feof(resource))
     {
+        //发送给client socket
         send(client, buf, strlen(buf), 0);
         fgets(buf, sizeof(buf), resource);
     }
