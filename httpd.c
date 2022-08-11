@@ -239,6 +239,7 @@ void execute_cgi(int client, const char *path,
         const char *method, const char *query_string)
 {
     char buf[1024];
+    //pipe
     int cgi_output[2];
     int cgi_input[2];
     pid_t pid;
@@ -250,6 +251,11 @@ void execute_cgi(int client, const char *path,
 
     buf[0] = 'A'; buf[1] = '\0';
     if (strcasecmp(method, "GET") == 0)
+        //  GET /sn/index.php?sn=123&n=asa HTTP/1.1
+        //  Accept: */*
+        //  Accept-Language: zh-cn
+        //  host: localhost
+        //GET只检查第一行
         while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
             numchars = get_line(client, buf, sizeof(buf));
     else if (strcasecmp(method, "POST") == 0) /*POST*/
@@ -257,6 +263,7 @@ void execute_cgi(int client, const char *path,
         numchars = get_line(client, buf, sizeof(buf));
         while ((numchars > 0) && strcmp("\n", buf))
         {
+            //正常情况下前14个字节为"Content-Length:"
             buf[15] = '\0';
             if (strcasecmp(buf, "Content-Length:") == 0)
                 content_length = atoi(&(buf[16]));
@@ -271,7 +278,7 @@ void execute_cgi(int client, const char *path,
     {
     }
 
-
+    //父子进程通过管道进行通信，子进程写数据给父进程，父进程发送给client
     if (pipe(cgi_output) < 0) {
         cannot_execute(client);
         return;
@@ -287,12 +294,13 @@ void execute_cgi(int client, const char *path,
     }
     sprintf(buf, "HTTP/1.0 200 OK\r\n");
     send(client, buf, strlen(buf), 0);
+    //子进程内部负责
     if (pid == 0)  /* child: CGI script */
     {
         char meth_env[255];
         char query_env[255];
         char length_env[255];
-
+        // cgi_input[1] -> cgi_input[0] -> STDIN -> STDOUT -> cgi_output[1] -> cgi_output[0]
         dup2(cgi_output[1], STDOUT);
         dup2(cgi_input[0], STDIN);
         close(cgi_output[0]);
@@ -307,6 +315,11 @@ void execute_cgi(int client, const char *path,
             sprintf(length_env, "CONTENT_LENGTH=%d", content_length);
             putenv(length_env);
         }
+        /*
+            头文件：#include <unistd.h>
+            函数定义：int execl(const char *path, const char *arg, ...);
+            函数说明：execl()用来执行参数path字符串所代表的文件路径， 接下来的参数代表执行该文件时传递的argv[0],argv[1].....最后一个参数必须用空指针NULL作结束。
+        */
         execl(path, NULL);
         exit(0);
     } else {    /* parent */
@@ -315,8 +328,10 @@ void execute_cgi(int client, const char *path,
         if (strcasecmp(method, "POST") == 0)
             for (i = 0; i < content_length; i++) {
                 recv(client, &c, 1, 0);
+                // cgi_input[1] -> cgi_input[0] -> STDIN -> STDOUT -> cgi_output[1] -> cgi_output[0]
                 write(cgi_input[1], &c, 1);
             }
+        //可以用splice
         while (read(cgi_output[0], &c, 1) > 0)
             send(client, &c, 1, 0);
 
@@ -344,17 +359,20 @@ int get_line(int sock, char *buf, int size)
     int i = 0;
     char c = '\0';
     int n;
-
+    //到达当前要求的最大size或者换行符停止
     while ((i < size - 1) && (c != '\n'))
     {
+        //逐字节接收
         n = recv(sock, &c, 1, 0);
         /* DEBUG printf("%02X\n", c); */
         if (n > 0)
         {
             if (c == '\r')
-            {
+            {   
+                //recv()最后一个参数flags默认为0，则取出后清除tcp缓冲区已读数据，MSG_PEEK则不会清除
                 n = recv(sock, &c, 1, MSG_PEEK);
                 /* DEBUG printf("%02X\n", c); */
+                //如果是/r/n则清除缓冲区的\n,不是则自动添加\n
                 if ((n > 0) && (c == '\n'))
                     recv(sock, &c, 1, 0);
                 else
@@ -473,6 +491,7 @@ int startup(u_short *port)
     }
     if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0)
         error_die("bind");
+    //*port=0则动态分配一个端口
     if (*port == 0)  /* if dynamically allocating a port */
     {
         socklen_t namelen = sizeof(name);
