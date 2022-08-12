@@ -189,7 +189,7 @@ void bad_request(int client)
 void cat(int client, FILE *resource)
 {
     char buf[1024];
-    //FILE *resource = fopen(path,"r");
+    //FILE *resource = fopen(filepath,"r");
     fgets(buf, sizeof(buf), resource);
     //没到eof继续读
     while (!feof(resource))
@@ -454,10 +454,12 @@ void serve_file(int client, const char *filename)
         numchars = get_line(client, buf, sizeof(buf));
 
     resource = fopen(filename, "r");
-    if (resource == NULL)
+    if (resource == NULL) 
+        //404 NOT FOUND
         not_found(client);
     else
     {
+        //200 OK
         headers(client, filename);
         cat(client, resource);
     }
